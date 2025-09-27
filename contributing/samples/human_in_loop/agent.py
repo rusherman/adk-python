@@ -15,10 +15,9 @@
 from typing import Any
 
 from google.adk import Agent
-from google.adk.tools import ToolContext
 from google.adk.tools.long_running_tool import LongRunningFunctionTool
+from google.adk.tools.tool_context import ToolContext
 from google.genai import types
-from google.adk.models.lite_llm import LiteLlm
 
 def reimburse(purpose: str, amount: float) -> str:
   """Reimburse the amount of money to the employee."""
@@ -39,8 +38,8 @@ def ask_for_approval(
 
 
 root_agent = Agent(
-    model=LiteLlm("deepseek/deepseek-chat"),
-    name="reimbursement_agent",
+    model='gemini-2.5-flash',
+    name='reimbursement_agent',
     instruction="""
       You are an agent whose job is to handle the reimbursement process for
       the employees. If the amount is less than $100, you will automatically

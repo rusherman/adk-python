@@ -37,6 +37,11 @@ _py_builtin_type_to_schema_type = {
     bool: types.Type.BOOLEAN,
     list: types.Type.ARRAY,
     dict: types.Type.OBJECT,
+    None: types.Type.NULL,
+    # TODO requested google GenAI SDK to add a Type.ANY and do the mapping on
+    # their side, once new enum is added, replace the below one with
+    # Any: types.Type.ANY
+    Any: None,
 }
 
 logger = logging.getLogger('google_adk.' + __name__)

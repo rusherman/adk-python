@@ -13,24 +13,22 @@
 # limitations under the License.
 
 import asyncio
+import os
+from typing import Any
+from typing import Union
 
 import agent
 from dotenv import load_dotenv
-from typing import Any
-from typing import Union
-from google.adk.agents import Agent
-from google.adk.events import Event
+from google.adk.agents.llm_agent import Agent
+from google.adk.events.event import Event
 from google.adk.runners import Runner
-from google.adk.tools import LongRunningFunctionTool
-from google.adk.sessions import InMemorySessionService
+from google.adk.sessions.in_memory_session_service import InMemorySessionService
+from google.adk.tools.long_running_tool import LongRunningFunctionTool
 from google.genai import types
-
-import os
 from opentelemetry import trace
 from opentelemetry.exporter.cloud_trace import CloudTraceSpanExporter
 from opentelemetry.sdk.trace import export
 from opentelemetry.sdk.trace import TracerProvider
-
 
 load_dotenv(override=True)
 
