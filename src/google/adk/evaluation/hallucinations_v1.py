@@ -32,7 +32,9 @@ from ..models.llm_response import LlmResponse
 from ..models.registry import LLMRegistry
 from ..utils.context_utils import Aclosing
 from ..utils.feature_decorator import experimental
+from ._retry_options_utils import add_default_retry_options_if_not_present
 from .app_details import AppDetails
+from .eval_case import ConversationScenario
 from .eval_case import Invocation
 from .eval_case import InvocationEvent
 from .eval_case import InvocationEvents
@@ -297,7 +299,10 @@ class HallucinationsV1Evaluator(Evaluator):
     self.segmenter_prompt = _HALLUCINATIONS_V1_SEGMENTER_PROMPT
     self.sentence_validator_prompt = _HALLUCINATIONS_V1_VALIDATOR_PROMPT
     self._model = self._judge_model_options.judge_model
-    self._model_config = self._judge_model_options.judge_model_config
+    self._model_config = (
+        self._judge_model_options.judge_model_config
+        or genai_types.GenerateContentConfig()
+    )
 
   def _setup_auto_rater(self) -> BaseLlm:
     model_id = self._judge_model_options.judge_model
@@ -526,6 +531,7 @@ class HallucinationsV1Evaluator(Evaluator):
         ],
         config=self._model_config,
     )
+    add_default_retry_options_if_not_present(segmenter_llm_request)
     try:
       async with Aclosing(
           self._judge_model.generate_content_async(segmenter_llm_request)
@@ -559,6 +565,7 @@ class HallucinationsV1Evaluator(Evaluator):
         ],
         config=self._model_config,
     )
+    add_default_retry_options_if_not_present(validator_llm_request)
     try:
       async with Aclosing(
           self._judge_model.generate_content_async(validator_llm_request)
@@ -714,6 +721,7 @@ class HallucinationsV1Evaluator(Evaluator):
       self,
       actual_invocations: list[Invocation],
       expected_invocations: Optional[list[Invocation]],
+      _: Optional[ConversationScenario] = None,
   ) -> EvaluationResult:
     # expected_invocations are not required by the metric and if they are not
     # supplied, we provide a list of None to rest of the code.
