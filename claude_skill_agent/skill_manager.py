@@ -1,43 +1,67 @@
 """
-Skill管理器 - 动态加载和管理多个Claude skill文件
+Skill管理器 - 动态加载skill并创建可执行的Agent
 
-功能:
-1. 自动扫描并加载指定目录下的所有.skill.md文件
-2. 提供skill检索和查询功能
-3. 支持根据关键词匹配相关skill
+核心机制:
+1. 扫描加载 *.skill.md 文件
+2. 为每个skill动态创建一个Agent
+3. 使用AgentTool包装，实现fork执行
 """
 
-import os
 import re
-from pathlib import Path
 from dataclasses import dataclass, field
-from typing import Optional
+from pathlib import Path
+from typing import Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from google.adk.agents import Agent
 
 
 @dataclass
 class Skill:
     """Skill数据类"""
-    name: str  # skill名称
-    path: str  # 文件路径
-    content: str  # skill内容
-    description: str = ""  # skill描述（从内容提取）
-    keywords: list[str] = field(default_factory=list)  # 关键词列表
+    name: str
+    path: str
+    content: str
+    description: str = ""
+    keywords: list[str] = field(default_factory=list)
+    _agent: Optional["Agent"] = field(default=None, repr=False)
+
+    def get_agent(self, model) -> "Agent":
+        """获取或创建该skill对应的Agent"""
+        if self._agent is None:
+            from google.adk import Agent
+
+            self._agent = Agent(
+                model=model,
+                name=f"{self.name}_skill_agent",
+                description=self.description or f"专门处理{self.name}相关问题的Agent",
+                instruction=f"""
+你是一个专业的{self.name}专家。
+
+## 你的知识库
+
+{self.content}
+
+## 行为准则
+
+1. 基于上述知识库回答用户问题
+2. 回答要准确、清晰
+3. 提供代码示例时要有注释
+4. 如果问题超出知识库范围，诚实告知
+5. 使用中文回答
+""",
+            )
+        return self._agent
 
 
 class SkillManager:
-    """Skill管理器"""
+    """Skill管理器 - 加载和管理skill"""
 
     def __init__(self, skill_dirs: list[str] | str | None = None):
-        """
-        初始化skill管理器
-
-        Args:
-            skill_dirs: skill文件所在目录，支持单个路径或多个路径列表
-        """
         self.skills: dict[str, Skill] = {}
+        self._model = None
 
         if skill_dirs is None:
-            # 默认从项目根目录加载
             skill_dirs = [str(Path(__file__).parent.parent)]
         elif isinstance(skill_dirs, str):
             skill_dirs = [skill_dirs]
@@ -45,13 +69,16 @@ class SkillManager:
         for dir_path in skill_dirs:
             self._load_skills_from_dir(dir_path)
 
+    def set_model(self, model):
+        """设置用于skill agent的模型"""
+        self._model = model
+
     def _load_skills_from_dir(self, dir_path: str):
         """从目录加载所有skill文件"""
         path = Path(dir_path)
         if not path.exists():
             return
 
-        # 查找所有.skill.md文件
         for skill_file in path.glob("**/*.skill.md"):
             self._load_skill(skill_file)
 
@@ -61,10 +88,7 @@ class SkillManager:
             content = skill_path.read_text(encoding="utf-8")
             name = skill_path.stem.replace(".skill", "")
 
-            # 提取描述（第一行或第一段）
             description = self._extract_description(content)
-
-            # 提取关键词
             keywords = self._extract_keywords(content, name)
 
             skill = Skill(
@@ -76,7 +100,7 @@ class SkillManager:
             )
 
             self.skills[name] = skill
-            print(f"✓ 加载skill: {name} ({len(content)} 字符)")
+            print(f"✓ 加载skill: {name}")
 
         except Exception as e:
             print(f"✗ 加载skill失败 {skill_path}: {e}")
@@ -86,126 +110,85 @@ class SkillManager:
         lines = content.strip().split("\n")
         for line in lines:
             line = line.strip()
-            # 跳过标题行
             if line.startswith("#"):
                 continue
-            # 找到第一个非空的描述行
             if line:
-                return line[:200]  # 限制长度
+                return line[:200]
         return ""
 
     def _extract_keywords(self, content: str, name: str) -> list[str]:
         """从skill内容提取关键词"""
         keywords = [name.lower()]
-
-        # 从标题中提取关键词
         headers = re.findall(r"^#+\s+(.+)$", content, re.MULTILINE)
         for header in headers:
             words = re.findall(r"\b[a-zA-Z]{3,}\b", header.lower())
             keywords.extend(words)
-
-        # 从代码块语言标识提取
         code_langs = re.findall(r"```(\w+)", content)
         keywords.extend([lang.lower() for lang in code_langs])
-
-        # 去重
         return list(set(keywords))
 
     def get_skill(self, name: str) -> Optional[Skill]:
         """获取指定名称的skill"""
         return self.skills.get(name)
 
-    def get_all_skills(self) -> list[Skill]:
-        """获取所有skill"""
-        return list(self.skills.values())
-
     def list_skills(self) -> list[dict]:
         """列出所有skill的摘要信息"""
         return [
-            {
-                "name": skill.name,
-                "description": skill.description,
-                "keywords": skill.keywords[:10],  # 限制关键词数量
-            }
+            {"name": skill.name, "description": skill.description}
             for skill in self.skills.values()
         ]
 
-    def search_skills(self, query: str, top_k: int = 3) -> list[Skill]:
-        """
-        根据查询搜索相关skill
-
-        Args:
-            query: 搜索查询
-            top_k: 返回结果数量
-
-        Returns:
-            匹配的skill列表
-        """
-        query_lower = query.lower()
-        query_words = set(re.findall(r"\b\w+\b", query_lower))
-
-        scored_skills = []
-        for skill in self.skills.values():
-            score = 0
-
-            # 名称匹配（高权重）
-            if skill.name.lower() in query_lower:
-                score += 10
-
-            # 关键词匹配
-            skill_keywords = set(skill.keywords)
-            matches = query_words & skill_keywords
-            score += len(matches) * 2
-
-            # 内容包含查询词
-            for word in query_words:
-                if len(word) > 2 and word in skill.content.lower():
-                    score += 1
-
-            if score > 0:
-                scored_skills.append((score, skill))
-
-        # 按分数排序
-        scored_skills.sort(key=lambda x: x[0], reverse=True)
-
-        return [skill for _, skill in scored_skills[:top_k]]
-
-    def get_skill_content(self, name: str, max_length: int = 50000) -> str:
-        """
-        获取skill内容，支持长度限制
-
-        Args:
-            name: skill名称
-            max_length: 最大字符数
-
-        Returns:
-            skill内容
-        """
+    def get_skill_agent(self, name: str) -> Optional["Agent"]:
+        """获取skill对应的Agent实例"""
         skill = self.get_skill(name)
-        if not skill:
-            return f"未找到名为 '{name}' 的skill"
+        if skill and self._model:
+            return skill.get_agent(self._model)
+        return None
 
-        content = skill.content
-        if len(content) > max_length:
-            content = content[:max_length] + "\n\n... (内容已截断)"
+    def get_all_skill_agents(self) -> list["Agent"]:
+        """获取所有skill的Agent列表"""
+        if not self._model:
+            return []
+        return [
+            skill.get_agent(self._model)
+            for skill in self.skills.values()
+        ]
 
-        return content
+    def create_skill_tools(self) -> list:
+        """创建所有skill的AgentTool列表"""
+        from google.adk.tools.agent_tool import AgentTool
+
+        if not self._model:
+            raise ValueError("请先调用 set_model() 设置模型")
+
+        tools = []
+        for skill in self.skills.values():
+            agent = skill.get_agent(self._model)
+            tool = AgentTool(
+                agent=agent,
+                skip_summarization=False,
+            )
+            tools.append(tool)
+
+        return tools
 
 
-# 创建全局skill管理器实例
+# 全局实例
 _skill_manager: Optional[SkillManager] = None
 
 
 def get_skill_manager() -> SkillManager:
-    """获取全局skill管理器实例"""
+    """获取全局skill管理器"""
     global _skill_manager
     if _skill_manager is None:
         _skill_manager = SkillManager()
     return _skill_manager
 
 
-def init_skill_manager(skill_dirs: list[str] | str) -> SkillManager:
+def init_skill_manager(skill_dirs: list[str] | str, model=None) -> SkillManager:
     """初始化全局skill管理器"""
     global _skill_manager
     _skill_manager = SkillManager(skill_dirs)
+    if model:
+        _skill_manager.set_model(model)
     return _skill_manager
